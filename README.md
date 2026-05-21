@@ -1,6 +1,6 @@
 # 🔗 URL Shortener
 
-![CI](https://github.com/dhrumilbhut/url-shortener/actions/workflows/ci.yml/badge.svg)
+![CI](https://github.com/dhrumilbhut/url-shortner/actions/workflows/ci.yml/badge.svg)
 
 A production-grade URL shortening service built with **Node.js**, **Express**, **PostgreSQL**, **Redis**, and **RabbitMQ**. Click analytics are processed asynchronously — redirects are never blocked by analytics. Includes JWT auth with access + refresh token flow, token blocklist, admin user banning, and a minimal vanilla JS frontend.
 
@@ -206,6 +206,17 @@ Logout deletes the refresh token instantly. On ban, both tokens are invalidated.
 | `refresh:{userId}` | String | Refresh token, TTL 7d |
 | `blocklist:{jti}` | String | Invalidated token, TTL = remaining lifetime |
 | `banned:{userId}` | String | Banned user flag, no TTL |
+
+---
+
+## ⚙️ CI
+
+Every push to `main` runs a GitHub Actions workflow that:
+
+1. Spins up Postgres, Redis, and RabbitMQ as service containers
+2. Installs dependencies and initializes the database schema
+3. Boots the API server and hits `/health`
+4. Fails the build if any service reports `"down"`
 
 ---
 
