@@ -46,27 +46,18 @@ Services connect via `*.railway.internal` hostnames — no public ports exposed 
 
 ![Railway deployment graph](screenshots/railway-deployment.png)
 
-CI runs on every push via **GitHub Actions** — spins up all three infra services as containers, boots the API, and hits `/health` to verify all connections before marking the build green.
-
 ---
 
-## 🖥️ UI
+## ⚙️ CI/CD
 
-A minimal frontend served at `/` — login/register, shorten URLs, copy, delete, and inline click stats.
+Every push to `main` (except docs/screenshots) triggers a GitHub Actions workflow:
 
-### Login / Register
+1. Spins up Postgres, Redis, and RabbitMQ as service containers
+2. Installs dependencies and initializes the database schema from `init.sql`
+3. Boots the API server
+4. Polls `/health` until ready, then asserts all three services return `"ok"`
 
-![Login screen](/screenshots/login.png)
-
-### Regular user
-
-![Regular user dashboard](screenshots/user-dashboard.png)
-
-### Admin user
-
-![Admin dashboard](screenshots/admin-dashboard.png)
-
-> Admins see a **👑 User Management** panel with live ban/unban controls. Banning a user immediately invalidates their refresh token — they cannot obtain new access tokens.
+Pushes that only change `.md` files or `screenshots/` skip CI entirely.
 
 ---
 
@@ -100,16 +91,53 @@ Four distinct patterns — each solves a different problem:
 
 ---
 
-## ⚙️ CI/CD
+## 🖥️ UI
 
-Every push to `main` (except docs/screenshots) triggers a GitHub Actions workflow:
+A minimal frontend served at `/` — login/register, shorten URLs, copy, delete, and inline click stats.
 
-1. Spins up Postgres, Redis, and RabbitMQ as service containers
-2. Installs dependencies and initializes the database schema from `init.sql`
-3. Boots the API server
-4. Polls `/health` until ready, then asserts all three services return `"ok"`
+### Login / Register
 
-Pushes that only change `.md` files or `screenshots/` skip CI entirely.
+![Login screen](/screenshots/login.png)
+
+### Regular user
+
+![Regular user dashboard](screenshots/user-dashboard.png)
+
+### Admin user
+
+![Admin dashboard](screenshots/admin-dashboard.png)
+
+> Admins see a **👑 User Management** panel with live ban/unban controls. Banning a user immediately invalidates their refresh token — they cannot obtain new access tokens.
+
+---
+
+## 📡 API Reference
+
+### 🔐 Auth
+
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| POST | `/auth/register` | — | Create account |
+| POST | `/auth/login` | — | Returns `accessToken` + `refreshToken` |
+| POST | `/auth/refresh` | — | Exchange refresh token for new access token |
+| POST | `/auth/logout` | 🔒 | Deletes refresh token immediately |
+| POST | `/auth/invalidate` | 🔒 | Blocklists current token by `jti` |
+| POST | `/auth/admin/ban/:userId` | 🔒 👑 | Ban user + delete their refresh token |
+| DELETE | `/auth/admin/ban/:userId` | 🔒 👑 | Lift ban |
+| GET | `/auth/admin/users` | 🔒 👑 | List all users with ban status |
+
+### ✂️ URLs
+
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| POST | `/shorten` | 🔒 | Shorten a URL (optional `customCode`) |
+| GET | `/urls/me` | 🔒 | List your active URLs |
+| DELETE | `/urls/:shortCode` | 🔒 | Soft-delete (owner only, returns 404 either way) |
+| GET | `/r/:shortCode` | — | Redirect (302, rate limited to 60 req/60s per IP) |
+| GET | `/analytics/:shortCode` | — | Click stats |
+| GET | `/health` | — | `{"postgres":"ok","redis":"ok","rabbitmq":"ok"}` |
+
+> ⚠️ `totalClicks` only increments while the worker is running.
 
 ---
 
@@ -153,36 +181,6 @@ CREATE DATABASE shortener;
 ```
 
 > **Windows / WSL Redis:** `wsl sudo service redis-server start`
-
----
-
-## 📡 API Reference
-
-### 🔐 Auth
-
-| Method | Endpoint | Auth | Description |
-|---|---|---|---|
-| POST | `/auth/register` | — | Create account |
-| POST | `/auth/login` | — | Returns `accessToken` + `refreshToken` |
-| POST | `/auth/refresh` | — | Exchange refresh token for new access token |
-| POST | `/auth/logout` | 🔒 | Deletes refresh token immediately |
-| POST | `/auth/invalidate` | 🔒 | Blocklists current token by `jti` |
-| POST | `/auth/admin/ban/:userId` | 🔒 👑 | Ban user + delete their refresh token |
-| DELETE | `/auth/admin/ban/:userId` | 🔒 👑 | Lift ban |
-| GET | `/auth/admin/users` | 🔒 👑 | List all users with ban status |
-
-### ✂️ URLs
-
-| Method | Endpoint | Auth | Description |
-|---|---|---|---|
-| POST | `/shorten` | 🔒 | Shorten a URL (optional `customCode`) |
-| GET | `/urls/me` | 🔒 | List your active URLs |
-| DELETE | `/urls/:shortCode` | 🔒 | Soft-delete (owner only, returns 404 either way) |
-| GET | `/r/:shortCode` | — | Redirect (302, rate limited to 60 req/60s per IP) |
-| GET | `/analytics/:shortCode` | — | Click stats |
-| GET | `/health` | — | `{"postgres":"ok","redis":"ok","rabbitmq":"ok"}` |
-
-> ⚠️ `totalClicks` only increments while the worker is running.
 
 ---
 
