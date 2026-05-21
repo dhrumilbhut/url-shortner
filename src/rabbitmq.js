@@ -46,7 +46,7 @@ async function connectRabbitMQ() {
     } catch (err) {
       attempt++;
       const wait = Math.min(Math.pow(2, attempt) * 500, 30000);
-      console.error(`RabbitMQ connect failed (attempt ${attempt}). Retrying in ${wait}ms...`);
+      console.error(`RabbitMQ connect failed (attempt ${attempt}): ${err.message}. Retrying in ${wait}ms...`);
       await new Promise((res) => setTimeout(res, wait));
     }
   }
