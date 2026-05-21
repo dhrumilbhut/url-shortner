@@ -8,11 +8,16 @@ const DLQ = 'click_events_dead';
 let channel = null;
 
 async function connectRabbitMQ() {
+  if (!process.env.RABBITMQ_URL) {
+    throw new Error('RABBITMQ_URL environment variable is not set');
+  }
+
   let attempt = 0;
 
   while (true) {
     try {
       const url = process.env.RABBITMQ_URL.trim();
+      console.log(`RabbitMQ connecting to host: ${new URL(url).hostname}`);
       const socketOptions = url.startsWith('amqps://') ? { servername: new URL(url).hostname } : {};
       const conn = await amqp.connect(url, socketOptions);
 
@@ -46,7 +51,7 @@ async function connectRabbitMQ() {
     } catch (err) {
       attempt++;
       const wait = Math.min(Math.pow(2, attempt) * 500, 30000);
-      console.error(`RabbitMQ connect failed (attempt ${attempt}): ${err.message}. Retrying in ${wait}ms...`);
+      console.error(`RabbitMQ connect failed (attempt ${attempt}): ${err.message || err.code || String(err)}. Retrying in ${wait}ms...`);
       await new Promise((res) => setTimeout(res, wait));
     }
   }
