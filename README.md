@@ -2,9 +2,11 @@
 
 ![CI](https://github.com/dhrumilbhut/url-shortner/actions/workflows/ci.yml/badge.svg)
 
-A production-grade URL shortening service built with **Node.js**, **Express**, **PostgreSQL**, **Redis**, and **RabbitMQ**. Click analytics are processed asynchronously — redirects are never blocked by analytics. Includes JWT auth with access + refresh token flow, token blocklist, admin user banning, and a minimal vanilla JS frontend.
+A production-grade URL shortening service built with **Node.js**, **Express**, **PostgreSQL**, **Redis**, and **RabbitMQ** — deployed on Railway.
 
-> 🖥️ Start the server and open `http://localhost:3000`
+Click analytics are processed asynchronously via a dedicated RabbitMQ worker. Redirects are never slowed down by analytics writes. Redis is used in four distinct patterns: cache, atomic counter, sliding window rate limiter, and token store. Auth is a two-token JWT system with immediate revocation via a Redis blocklist.
+
+> 🌐 **Live demo:** https://api-production-679b.up.railway.app/
 
 ---
 
@@ -14,113 +16,43 @@ A production-grade URL shortening service built with **Node.js**, **Express**, *
 POST /shorten  →  JWT verify  →  Postgres (store URL)
 
 GET  /r/:code  →  Redis cache
-                    ├── HIT:  instant redirect
+                    ├── HIT:  instant redirect (no DB query)
                     └── MISS: Postgres → cache → redirect
                 ↓
-            RabbitMQ (fire & forget)  →  Worker  →  Redis INCR
+            RabbitMQ (fire & forget — redirect never waits)
+                ↓
+            Worker process (separate service)
+                ↓
+            Redis INCR (atomic click counter)
 
 GET /analytics/:code  →  Postgres metadata + Redis click count
 ```
 
 ---
 
-## ✅ Prerequisites
+## 🚀 Deployment
 
-| Service | Port |
+Deployed on **Railway** with 5 services communicating over Railway's private network:
+
+| Service | How |
 |---|---|
-| Node.js v20+ | — |
-| PostgreSQL | 5432 |
-| Redis | 6379 |
-| RabbitMQ | 5672 |
+| API server | Built from Dockerfile |
+| Click worker | Same image, different start command |
+| PostgreSQL | Railway plugin |
+| Redis | Railway plugin |
+| RabbitMQ | Railway Docker service (`rabbitmq:3-alpine`) |
 
-> **Windows / WSL Redis:** `wsl sudo service redis-server start`
+Services connect via `*.railway.internal` hostnames — no public ports exposed for infra, no credentials in transit. The worker and API share the same Docker image but run independently; the worker can crash and restart without affecting redirects.
 
----
+![Railway deployment graph](screenshots/railway-deployment.png)
 
-## 🚀 Setup
-
-```bash
-npm install
-```
-
-Create the database:
-
-```sql
-CREATE DATABASE shortener;
-\c shortener
-
-CREATE TABLE users (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  email VARCHAR(255) UNIQUE NOT NULL,
-  password_hash TEXT NOT NULL,
-  created_at TIMESTAMP DEFAULT NOW(),
-  role VARCHAR(20) NOT NULL DEFAULT 'user'
-);
-
-CREATE TABLE urls (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  short_code VARCHAR(10) UNIQUE NOT NULL,
-  original_url TEXT NOT NULL,
-  created_at TIMESTAMP DEFAULT NOW(),
-  is_active BOOLEAN DEFAULT TRUE,
-  created_by UUID REFERENCES users(id) ON DELETE SET NULL
-);
-```
-
-Copy and fill in `.env`:
-
-```bash
-cp .env.example .env
-```
-
-```env
-PORT=3000
-DATABASE_URL=postgresql://USER:PASSWORD@localhost:5432/shortener
-REDIS_URL=redis://localhost:6379
-RABBITMQ_URL=amqp://guest:guest@localhost:5672
-BASE_URL=http://localhost:3000
-JWT_SECRET=your_long_random_secret_here
-JWT_EXPIRES_IN=15m
-REFRESH_TOKEN_EXPIRES_IN=7d
-```
-
----
-
-## ▶️ Running
-
-### Option 1 — Docker (recommended)
-
-Requires [Docker Desktop](https://www.docker.com/products/docker-desktop). No other installs needed.
-
-```bash
-docker compose up --build
-```
-
-Everything starts automatically — Postgres, Redis, RabbitMQ, the API server, and the worker. Tables are created on first run. Open `http://localhost:3000`.
-
-To stop and clean up:
-```bash
-docker compose down          # stop containers, keep data
-docker compose down -v       # stop containers + delete data
-```
-
-### Option 2 — Local
-
-Requires PostgreSQL, Redis, and RabbitMQ running locally.
-
-```bash
-# Terminal 1 — API server
-npm run dev
-
-# Terminal 2 — click worker
-npm run worker
-```
+CI runs on every push via **GitHub Actions** — spins up all three infra services as containers, boots the API, and hits `/health` to verify all connections before marking the build green.
 
 ---
 
 ## 🖥️ UI
 
-A minimal frontend at `http://localhost:3000` — login/register, shorten URLs, view your links, copy, delete, and see click stats inline.
+A minimal frontend served at `/` — login/register, shorten URLs, copy, delete, and inline click stats.
 
 ### Login / Register
 
@@ -134,7 +66,93 @@ A minimal frontend at `http://localhost:3000` — login/register, shorten URLs, 
 
 ![Admin dashboard](screenshots/admin-dashboard.png)
 
-> Admins see a **👑 User Management** panel below their URLs where they can ban or unban any user.
+> Admins see a **👑 User Management** panel with live ban/unban controls. Banning a user immediately invalidates their refresh token — they cannot obtain new access tokens.
+
+---
+
+## 🔑 Auth Design
+
+Two-token system built around a key tradeoff: **JWTs are stateless and cannot be revoked**. Keeping them short-lived (15 min) limits damage if stolen. Refresh tokens live in Redis and are deleted instantly on logout or ban.
+
+| Token | Lifespan | Storage | Purpose |
+|---|---|---|---|
+| Access token (JWT) | 15 min | Client only | `Authorization: Bearer` on every request |
+| Refresh token (UUID) | 7 days | Redis | Silently renew access token |
+
+**Immediate revocation** is handled two ways:
+- `POST /auth/invalidate` — blocklists the token's `jti` in Redis with TTL = remaining lifetime. Auto-expires, no cleanup needed.
+- `POST /auth/admin/ban/:userId` — sets `banned:{userId}` in Redis (no TTL) + deletes their refresh token. Every subsequent request is rejected at the middleware level.
+
+---
+
+## ⚡ Redis Patterns
+
+Four distinct patterns — each solves a different problem:
+
+| Key | Pattern | Why |
+|---|---|---|
+| `url:{code}` | Cache (TTL 1h) | Redirects skip Postgres on cache hit |
+| `clicks:{code}` | Atomic INCR | Safe under concurrent writes — no race conditions |
+| `rate:{ip}` | Sorted set sliding window | Accurate per-IP limiting across a rolling 60s window |
+| `refresh:{userId}` | String (TTL 7d) | Revocable session — deleted on logout or ban |
+| `blocklist:{jti}` | String (TTL = remaining lifetime) | Immediate token invalidation, auto-cleanup |
+| `banned:{userId}` | String (no TTL) | Permanent user block until manually lifted |
+
+---
+
+## ⚙️ CI/CD
+
+Every push to `main` (except docs/screenshots) triggers a GitHub Actions workflow:
+
+1. Spins up Postgres, Redis, and RabbitMQ as service containers
+2. Installs dependencies and initializes the database schema from `init.sql`
+3. Boots the API server
+4. Polls `/health` until ready, then asserts all three services return `"ok"`
+
+Pushes that only change `.md` files or `screenshots/` skip CI entirely.
+
+---
+
+## 🏃 Running Locally
+
+### Option 1 — Docker (recommended)
+
+Requires [Docker Desktop](https://www.docker.com/products/docker-desktop). No other installs needed — Postgres, Redis, RabbitMQ, API, and worker all start together.
+
+```bash
+docker compose up --build
+```
+
+Tables are created automatically on first run. Open `http://localhost:3000`.
+
+```bash
+docker compose down      # stop, keep data
+docker compose down -v   # stop, delete data
+```
+
+### Option 2 — Local
+
+Requires PostgreSQL, Redis, and RabbitMQ running locally.
+
+```bash
+cp .env.example .env   # fill in your values
+npm install
+
+# Terminal 1
+npm run dev
+
+# Terminal 2
+npm run worker
+```
+
+Create the schema:
+```sql
+CREATE DATABASE shortener;
+\c shortener
+-- then run the contents of init.sql
+```
+
+> **Windows / WSL Redis:** `wsl sudo service redis-server start`
 
 ---
 
@@ -147,19 +165,11 @@ A minimal frontend at `http://localhost:3000` — login/register, shorten URLs, 
 | POST | `/auth/register` | — | Create account |
 | POST | `/auth/login` | — | Returns `accessToken` + `refreshToken` |
 | POST | `/auth/refresh` | — | Exchange refresh token for new access token |
-| POST | `/auth/logout` | 🔒 | Deletes refresh token |
-| POST | `/auth/invalidate` | 🔒 | Blocklists current token immediately |
-| POST | `/auth/admin/ban/:userId` | 🔒 👑 | Ban user (admin only) |
-| DELETE | `/auth/admin/ban/:userId` | 🔒 👑 | Lift ban (admin only) |
-
-**Login response:**
-```json
-{ "accessToken": "eyJ...", "refreshToken": "uuid", "expiresIn": "15m" }
-```
-
-**Refresh body:** `{ "userId": "uuid", "refreshToken": "uuid" }`
-
----
+| POST | `/auth/logout` | 🔒 | Deletes refresh token immediately |
+| POST | `/auth/invalidate` | 🔒 | Blocklists current token by `jti` |
+| POST | `/auth/admin/ban/:userId` | 🔒 👑 | Ban user + delete their refresh token |
+| DELETE | `/auth/admin/ban/:userId` | 🔒 👑 | Lift ban |
+| GET | `/auth/admin/users` | 🔒 👑 | List all users with ban status |
 
 ### ✂️ URLs
 
@@ -167,62 +177,25 @@ A minimal frontend at `http://localhost:3000` — login/register, shorten URLs, 
 |---|---|---|---|
 | POST | `/shorten` | 🔒 | Shorten a URL (optional `customCode`) |
 | GET | `/urls/me` | 🔒 | List your active URLs |
-| DELETE | `/urls/:shortCode` | 🔒 | Soft-delete (owner only) |
-| GET | `/r/:shortCode` | — | Redirect (302, rate limited) |
+| DELETE | `/urls/:shortCode` | 🔒 | Soft-delete (owner only, returns 404 either way) |
+| GET | `/r/:shortCode` | — | Redirect (302, rate limited to 60 req/60s per IP) |
 | GET | `/analytics/:shortCode` | — | Click stats |
-| GET | `/health` | — | Service health |
+| GET | `/health` | — | `{"postgres":"ok","redis":"ok","rabbitmq":"ok"}` |
 
-**Shorten body:** `{ "url": "https://...", "customCode": "optional" }`
-
-**Analytics response:**
-```json
-{ "shortCode": "xK9pQr", "originalUrl": "https://...", "totalClicks": 42, "isActive": true }
-```
-
-> ⚠️ `totalClicks` only updates while the worker is running.
-
----
-
-## 🔑 Auth Flow
-
-Two-token system:
-
-| Token | Lifespan | Stored | Used for |
-|---|---|---|---|
-| Access token (JWT) | 15 min | Client only | `Authorization: Bearer` header |
-| Refresh token (UUID) | 7 days | Redis | Silently renew access token |
-
-Logout deletes the refresh token instantly. On ban, both tokens are invalidated.
-
----
-
-## ⚡ Redis Keys
-
-| Key | Pattern | Purpose |
-|---|---|---|
-| `url:{code}` | Cache | Original URL, TTL 1h |
-| `clicks:{code}` | Counter | Atomic INCR by worker |
-| `rate:{ip}` | Sorted set | Sliding window rate limiter (60 req/60s) |
-| `refresh:{userId}` | String | Refresh token, TTL 7d |
-| `blocklist:{jti}` | String | Invalidated token, TTL = remaining lifetime |
-| `banned:{userId}` | String | Banned user flag, no TTL |
-
----
-
-## ⚙️ CI
-
-Every push to `main` runs a GitHub Actions workflow that:
-
-1. Spins up Postgres, Redis, and RabbitMQ as service containers
-2. Installs dependencies and initializes the database schema
-3. Boots the API server and hits `/health`
-4. Fails the build if any service reports `"down"`
+> ⚠️ `totalClicks` only increments while the worker is running.
 
 ---
 
 ## 🧰 Tech Stack
 
-Node.js + Express · PostgreSQL · Redis · RabbitMQ · bcrypt · jsonwebtoken · nanoid
+| | |
+|---|---|
+| **Runtime** | Node.js v20 + Express v5 |
+| **Database** | PostgreSQL — persistent storage, soft deletes, UUID PKs |
+| **Cache / Store** | Redis — 4 patterns: cache, counter, rate limiter, token store |
+| **Queue** | RabbitMQ — durable queue, dead-letter exchange, fire-and-forget publish |
+| **Auth** | bcrypt (password hashing) · jsonwebtoken (JWT) |
+| **Infra** | Docker Compose · Railway · GitHub Actions |
 
 ---
 
@@ -236,5 +209,5 @@ Node.js + Express · PostgreSQL · Redis · RabbitMQ · bcrypt · jsonwebtoken �
 | `401 Access token expired` | Call `POST /auth/refresh` |
 | `403 Your account has been banned` | Contact admin |
 | `totalClicks` always 0 | Worker not running — `npm run worker` |
-| HTTP 429 on every request | Rate limited — wait 60s |
+| HTTP 429 | Rate limited — wait 60s |
 | RabbitMQ UI not loading | `rabbitmq-plugins enable rabbitmq_management` |
