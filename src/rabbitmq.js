@@ -12,7 +12,9 @@ async function connectRabbitMQ() {
 
   while (true) {
     try {
-      const conn = await amqp.connect(process.env.RABBITMQ_URL);
+      const url = process.env.RABBITMQ_URL.trim();
+      const socketOptions = url.startsWith('amqps://') ? { servername: new URL(url).hostname } : {};
+      const conn = await amqp.connect(url, socketOptions);
 
       conn.on('error', (err) => {
         console.error('RabbitMQ connection error:', err.message);
