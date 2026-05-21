@@ -1,5 +1,7 @@
 # 🔗 URL Shortener
 
+![CI](https://github.com/dhrumilbhut/url-shortener/actions/workflows/ci.yml/badge.svg)
+
 A production-grade URL shortening service built with **Node.js**, **Express**, **PostgreSQL**, **Redis**, and **RabbitMQ**. Click analytics are processed asynchronously — redirects are never blocked by analytics. Includes JWT auth with access + refresh token flow, token blocklist, admin user banning, and a minimal vanilla JS frontend.
 
 > 🖥️ Start the server and open `http://localhost:3000`
@@ -86,7 +88,25 @@ REFRESH_TOKEN_EXPIRES_IN=7d
 
 ## ▶️ Running
 
-Two terminals:
+### Option 1 — Docker (recommended)
+
+Requires [Docker Desktop](https://www.docker.com/products/docker-desktop). No other installs needed.
+
+```bash
+docker compose up --build
+```
+
+Everything starts automatically — Postgres, Redis, RabbitMQ, the API server, and the worker. Tables are created on first run. Open `http://localhost:3000`.
+
+To stop and clean up:
+```bash
+docker compose down          # stop containers, keep data
+docker compose down -v       # stop containers + delete data
+```
+
+### Option 2 — Local
+
+Requires PostgreSQL, Redis, and RabbitMQ running locally.
 
 ```bash
 # Terminal 1 — API server

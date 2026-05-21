@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  health-check:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: shortener
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+
+      rabbitmq:
+        image: rabbitmq:3-alpine
+        ports:
+          - 5672:5672
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Initialize database schema
+        run: psql postgresql://postgres:postgres@localhost:5432/shortener -f init.sql
+
+      - name: Start API server
+        run: node src/index.js &
+        env:
+          PORT: 3000
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/shortener
+          REDIS_URL: redis://localhost:6379
+          RABBITMQ_URL: amqp://guest:guest@localhost:5672
+          BASE_URL: http://localhost:3000
+          JWT_SECRET: ci-test-secret-not-for-production
+          JWT_EXPIRES_IN: 15m
+          REFRESH_TOKEN_EXPIRES_IN: 7d
+
+      - name: Wait for server to be ready
+        run: |
+          for i in {1..15}; do
+            curl -sf http://localhost:3000/health && exit 0
+            sleep 2
+          done
+          echo "Server did not start in time" && exit 1
+
+      - name: Verify all services healthy
+        run: |
+          response=$(curl -s http://localhost:3000/health)
+          echo "$response"
+          echo "$response" | grep -q '"postgres":"ok"'
+          echo "$response" | grep -q '"redis":"ok"'
+          echo "$response" | grep -q '"rabbitmq":"ok"'
