@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>URL Shortener</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+
+  <!-- AUTH VIEW -->
+  <div id="auth-view">
+    <div class="auth-card">
+      <div class="logo">🔗 URL Shortener</div>
+
+      <div class="tabs">
+        <button class="tab active" id="tab-login" onclick="switchTab('login')">Login</button>
+        <button class="tab" id="tab-register" onclick="switchTab('register')">Register</button>
+      </div>
+
+      <!-- Login Form -->
+      <form id="login-form" onsubmit="handleLogin(event)">
+        <input type="email" id="login-email" placeholder="Email" required autocomplete="email">
+        <input type="password" id="login-password" placeholder="Password" required>
+        <button type="submit" class="btn-primary" id="login-btn">Login</button>
+        <p class="form-error" id="login-error"></p>
+      </form>
+
+      <!-- Register Form -->
+      <form id="register-form" class="hidden" onsubmit="handleRegister(event)">
+        <input type="email" id="register-email" placeholder="Email" required autocomplete="email">
+        <input type="password" id="register-password" placeholder="Password (min 8 characters)" required>
+        <button type="submit" class="btn-primary" id="register-btn">Create Account</button>
+        <p class="form-error" id="register-error"></p>
+        <p class="form-success" id="register-success"></p>
+      </form>
+    </div>
+  </div>
+
+  <!-- DASHBOARD VIEW -->
+  <div id="dashboard-view" class="hidden">
+
+    <header>
+      <div class="header-logo">🔗 URL Shortener</div>
+      <div class="header-right">
+        <span class="admin-badge hidden" id="admin-badge">👑 Admin</span>
+        <span class="user-badge" id="user-email-display"></span>
+        <button class="btn-outline" onclick="handleLogout()">Logout</button>
+      </div>
+    </header>
+
+    <main>
+
+      <!-- Shorten Card -->
+      <div class="card">
+        <h2>Shorten a URL</h2>
+        <form id="shorten-form" onsubmit="handleShorten(event)">
+          <div class="input-row">
+            <input type="url" id="url-input" placeholder="https://example.com" required>
+            <input type="text" id="custom-code-input" placeholder="Custom code (optional)" maxlength="10">
+            <button type="submit" class="btn-primary" id="shorten-btn">Shorten</button>
+          </div>
+        </form>
+        <p class="form-error" id="shorten-error"></p>
+
+        <!-- Result box shown after shortening -->
+        <div id="shorten-result" class="result-box hidden">
+          <span class="result-label">Your short URL:</span>
+          <a id="result-link" href="#" target="_blank" class="result-url"></a>
+          <button class="btn-copy" id="copy-btn" onclick="copyResult()">Copy</button>
+        </div>
+      </div>
+
+      <!-- URLs List Card -->
+      <div class="card">
+        <div class="card-header">
+          <h2>Your URLs</h2>
+          <button class="btn-outline btn-sm" onclick="loadMyUrls()">↻ Refresh</button>
+        </div>
+        <div id="urls-container">
+          <p class="muted center">Loading your URLs...</p>
+        </div>
+      </div>
+
+      <!-- Admin Panel — only visible to admins -->
+      <div class="card hidden" id="admin-panel">
+        <div class="card-header">
+          <h2>👑 User Management</h2>
+          <button class="btn-outline btn-sm" onclick="loadUsers()">↻ Refresh</button>
+        </div>
+        <div id="users-container">
+          <p class="muted center" style="padding:20px">Loading users...</p>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <script src="/js/app.js"></script>
+</body>
+</html>

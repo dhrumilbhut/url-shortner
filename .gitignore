@@ -1,0 +1,12 @@
+# Secret config — never commit real credentials
+.env
+
+# npm dependencies — these are installed from package.json, no need to track 100k files
+node_modules/
+
+# Editor folders
+.vscode/
+.idea/
+
+# OS junk
+Thumbs.db
