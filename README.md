@@ -1,8 +1,8 @@
-# 🔗 URL Shortener
+# 🔗 Linkq
 
 ![CI](https://github.com/dhrumilbhut/url-shortner/actions/workflows/ci.yml/badge.svg)
 
-A production-grade URL shortening service built with **Node.js**, **Express**, **PostgreSQL**, **Redis**, and **RabbitMQ** — deployed on Railway.
+A production-grade URL shortener built with **Node.js**, **Express**, **PostgreSQL**, **Redis**, and **RabbitMQ** — deployed on Railway.
 
 Click analytics are processed asynchronously via a dedicated RabbitMQ worker. Redirects are never slowed down by analytics writes. Redis is used in four distinct patterns: cache, atomic counter, sliding window rate limiter, and token store. Auth is a two-token JWT system with immediate revocation via a Redis blocklist.
 
